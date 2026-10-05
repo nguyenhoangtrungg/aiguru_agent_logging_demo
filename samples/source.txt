@@ -1,0 +1,3 @@
+Nhóm sẽ thử trợ lý tóm tắt biên bản trong tuần tới.
+Mỗi lần chạy cần ghi model, phiên bản prompt và trạng thái.
+Người phụ trách sẽ kiểm tra các lần lỗi trước buổi họp thứ Sáu.
