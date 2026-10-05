@@ -53,3 +53,11 @@ Repository: https://github.com/nguyenhoangtrungg/aiguru_agent_logging_demo. Ch�
 ```bash
 python filter_errors.py examples/five-runs.jsonl
 ```
+
+## Đọc các sự kiện thuộc một run
+
+```bash
+python read_run.py examples/five-runs.jsonl
+```
+
+Script in seq, event và status của run đầu: run_start, tool_start, tool_end, run_end. Có thể chọn UUID khác bằng `--run-id`.
