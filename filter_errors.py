@@ -20,7 +20,7 @@ def validate_row(row):
         raise ValueError("timestamp must be UTC")
     if type(row.get("seq")) is not int or row["seq"] < 1:
         raise ValueError("invalid sequence")
-    if row["mode"] not in {"simulated", "ollama"} or row["prompt_version"] not in {"v1", "v2"}:
+    if row["mode"] not in {"simulated", "openrouter"} or row["prompt_version"] not in {"v1", "v2"}:
         raise ValueError("invalid run metadata")
     starts = {"run_start", "tool_start", "model_start"}
     ends = {"run_end", "tool_end", "model_end"}

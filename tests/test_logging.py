@@ -73,31 +73,31 @@ class LoggingTests(unittest.TestCase):
         self.assertEqual(list(error_runs(self.log, "other")), [])
 
     def test_live_model_selects_tool(self):
-        replies = [{"tool_calls": [{"function": {"name": "read_document", "arguments": {}}}]}, {"content": "- Kết quả"}]
+        replies = [{"tool_calls": [{"id": "call_test", "function": {"name": "read_document", "arguments": "{}"}}]}, {"content": "- Kết quả"}]
         with patch("agent.chat", side_effect=replies):
-            summary, _ = run(self.source, self.log, mode="ollama", model="mock")
+            summary, _ = run(self.source, self.log, mode="openrouter", model="mock")
         self.assertEqual(summary["status"], "success")
         self.assertEqual(len([r for r in self.rows() if r["event"] == "model_end"]), 2)
 
     def test_live_requires_tool(self):
         with patch("agent.chat", return_value={"content": "answer"}):
-            summary, _ = run(self.source, self.log, mode="ollama", model="mock")
+            summary, _ = run(self.source, self.log, mode="openrouter", model="mock")
         self.assertEqual(summary["error_code"], "required_tool_not_called")
 
     def test_live_model_error(self):
         with patch("agent.chat", side_effect=AgentError("model_request_failed")):
-            summary, _ = run(self.source, self.log, mode="ollama", model="mock")
+            summary, _ = run(self.source, self.log, mode="openrouter", model="mock")
         self.assertEqual(summary["error_code"], "model_request_failed")
         self.assertEqual(self.rows()[-2]["event"], "model_end")
 
     def test_live_unknown_tool(self):
         with patch("agent.chat", return_value={"tool_calls": [{"function": {"name": "shell"}}]}):
-            self.assertEqual(run(self.source, self.log, mode="ollama", model="mock")[0]["error_code"], "tool_call_invalid")
+            self.assertEqual(run(self.source, self.log, mode="openrouter", model="mock")[0]["error_code"], "tool_call_invalid")
 
     def test_live_step_limit(self):
-        msg = {"tool_calls": [{"function": {"name": "read_document", "arguments": {}}}]}
+        msg = {"tool_calls": [{"id": "call_test", "function": {"name": "read_document", "arguments": "{}"}}]}
         with patch("agent.chat", return_value=msg):
-            self.assertEqual(run(self.source, self.log, mode="ollama", model="mock")[0]["error_code"], "step_limit")
+            self.assertEqual(run(self.source, self.log, mode="openrouter", model="mock")[0]["error_code"], "step_limit")
 
     def test_log_failure_is_visible(self):
         with self.assertRaises(OSError):
@@ -112,7 +112,7 @@ class LoggingTests(unittest.TestCase):
 
     def test_unexpected_model_closes_error_event(self):
         with patch("agent.chat", side_effect=RuntimeError("SECRET-test-token")):
-            row, _ = run(self.source, self.log, mode="ollama", model="mock")
+            row, _ = run(self.source, self.log, mode="openrouter", model="mock")
         self.assertEqual(self.rows()[-2]["event"], "model_end")
         self.assertEqual(row["error_code"], "unexpected_error")
         self.assertNotIn("SECRET-test-token", self.log.read_text())
@@ -120,20 +120,20 @@ class LoggingTests(unittest.TestCase):
     def test_live_malformed_function(self):
         for fn in [None, [], "read_document"]:
             with self.subTest(function=fn), patch("agent.chat", return_value={"tool_calls": [{"function": fn}]}):
-                row, _ = run(self.source, self.log, mode="ollama", model="mock")
+                row, _ = run(self.source, self.log, mode="openrouter", model="mock")
             self.assertEqual(row["error_code"], "tool_call_invalid")
 
     def test_live_rejects_arguments(self):
         message = {"tool_calls": [{"function": {"name": "read_document", "arguments": {"path": "/private"}}}]}
         with patch("agent.chat", return_value=message):
-            row, _ = run(self.source, self.log, mode="ollama", model="mock")
+            row, _ = run(self.source, self.log, mode="openrouter", model="mock")
         self.assertEqual(row["error_code"], "tool_call_invalid")
         self.assertFalse(any(r["event"] == "tool_start" for r in self.rows()))
 
     def test_live_empty_output(self):
-        replies = [{"tool_calls": [{"function": {"name": "read_document", "arguments": {}}}]}, {"content": " "}]
+        replies = [{"tool_calls": [{"id": "call_test", "function": {"name": "read_document", "arguments": "{}"}}]}, {"content": " "}]
         with patch("agent.chat", side_effect=replies):
-            row, _ = run(self.source, self.log, mode="ollama", model="mock")
+            row, _ = run(self.source, self.log, mode="openrouter", model="mock")
         self.assertEqual(row["error_code"], "model_output_empty")
 
     def test_filter_rejects_incomplete_row(self):
@@ -203,12 +203,12 @@ class LoggingTests(unittest.TestCase):
         self.assertIn("observed: 4 success, 1 error", out.getvalue())
 
     def test_chat_serializes_request(self):
-        response = io.StringIO(json.dumps({"message": {"content": "answer"}}))
+        response = io.StringIO(json.dumps({"choices": [{"message": {"content": "answer"}}]}))
         with patch("agent.urlopen", return_value=response) as send:
-            self.assertEqual(chat([], "mock", "http://localhost:11434", 60), {"content": "answer"})
+            self.assertEqual(chat([], "mock", "https://openrouter.ai/api/v1", 60), {"content": "answer"})
         request = send.call_args.args[0]
         body = json.loads(request.data)
-        self.assertEqual(request.full_url, "http://localhost:11434/api/chat")
+        self.assertEqual(request.full_url, "https://openrouter.ai/api/v1/chat/completions")
         self.assertFalse(body["stream"])
         self.assertEqual(body["tools"][0]["function"]["name"], "read_document")
         self.assertEqual(send.call_args.kwargs["timeout"], 60)
@@ -217,7 +217,7 @@ class LoggingTests(unittest.TestCase):
         for data in ["broken", "[]", '{"message": null}']:
             with self.subTest(data=data), patch("agent.urlopen", return_value=io.StringIO(data)):
                 with self.assertRaises(AgentError) as error:
-                    chat([], "mock", "http://localhost:11434", 60)
+                    chat([], "mock", "https://openrouter.ai/api/v1", 60)
                 self.assertEqual(error.exception.code, "model_response_invalid")
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 import os
+import shlex
 from pathlib import Path
 import time
 import uuid
@@ -67,11 +68,25 @@ def read_document(path):
         raise AgentError("document_empty")
     return text
 
+def load_env(path):
+    """Load simple KEY=value settings without executing shell code."""
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.removeprefix("export ").partition("=")
+        if not separator or not key.strip().isidentifier():
+            raise ValueError("Invalid env setting")
+        parts = shlex.split(value, comments=True)
+        os.environ.setdefault(key.strip(), " ".join(parts))
+
 def chat(messages, model, base_url, timeout):
-    body = {"model": model, "messages": messages, "tools": [TOOL], "stream": False,
-            "options": {"temperature": 0}}
-    request = Request(base_url.rstrip("/") + "/api/chat",
-                      data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+    body = {"model": model, "messages": messages, "tools": [TOOL],
+            "stream": False, "temperature": 0, "max_tokens": 1024}
+    request = Request(base_url.rstrip("/") + "/chat/completions",
+                      data=json.dumps(body).encode(), headers={
+                          "Content-Type": "application/json",
+                          "Authorization": "Bearer " + os.environ.get("OPENROUTER_API_KEY", "")})
     try:
         with urlopen(request, timeout=timeout) as response:
             payload = json.load(response)
@@ -79,9 +94,13 @@ def chat(messages, model, base_url, timeout):
         raise AgentError("model_request_failed") from None
     except (ValueError, UnicodeError):
         raise AgentError("model_response_invalid") from None
-    if not isinstance(payload, dict) or not isinstance(payload.get("message"), dict):
+    try:
+        message = payload["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        raise AgentError("model_response_invalid") from None
+    if not isinstance(message, dict):
         raise AgentError("model_response_invalid")
-    return payload["message"]
+    return message
 
 def execute_tool(log, source):
     start = time.perf_counter()
@@ -124,11 +143,18 @@ def live_agent(log, source, model, prompt_version, base_url, timeout):
         if calls:
             for call in calls:
                 fn = call.get("function", {}) if isinstance(call, dict) else {}
-                if not isinstance(fn, dict) or fn.get("name") != "read_document" or fn.get("arguments", {}) != {}:
+                arguments = fn.get("arguments") if isinstance(fn, dict) else None
+                try:
+                    arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+                except ValueError:
+                    raise AgentError("tool_call_invalid") from None
+                call_id = call.get("id") if isinstance(call, dict) else None
+                if (not isinstance(fn, dict) or fn.get("name") != "read_document"
+                        or arguments != {} or not isinstance(call_id, str) or not call_id):
                     raise AgentError("tool_call_invalid")
                 text = execute_tool(log, source)
                 tool_used = True
-                messages.append({"role": "tool", "tool_name": "read_document", "content": text})
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": text})
         else:
             content = message.get("content")
             if not tool_used:
@@ -138,7 +164,7 @@ def live_agent(log, source, model, prompt_version, base_url, timeout):
             return content
     raise AgentError("step_limit")
 
-def run(source, log_path, *, mode="simulated", model="scripted-demo", prompt_version="v1", case="manual", base_url="http://127.0.0.1:11434", timeout=60):
+def run(source, log_path, *, mode="simulated", model="scripted-demo", prompt_version="v1", case="manual", base_url="https://openrouter.ai/api/v1", timeout=60):
     log = RunLog(log_path, mode, model, prompt_version, case)
     started = time.perf_counter()
     log.emit("run_start", "running")
@@ -162,15 +188,25 @@ def run(source, log_path, *, mode="simulated", model="scripted-demo", prompt_ver
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["simulated", "ollama"], default="simulated")
+    parser.add_argument("--mode", choices=["simulated", "openrouter"], default="simulated")
     parser.add_argument("--source", type=Path, default=ROOT / "samples/source.txt")
     parser.add_argument("--log", type=Path, default=Path("logs/runs.jsonl"))
-    parser.add_argument("--model", default=os.environ.get("LLM_MODEL"))
+    parser.add_argument("--model", default=os.environ.get("OPENROUTER_MODEL"))
     parser.add_argument("--prompt-version", choices=PROMPTS, default="v1")
-    parser.add_argument("--base-url", default=os.environ.get("LLM_BASE_URL", "http://127.0.0.1:11434"))
+    parser.add_argument("--base-url")
+    parser.add_argument("--env-file", type=Path)
     args = parser.parse_args()
-    if args.mode == "ollama" and not args.model:
-        parser.error("--model or LLM_MODEL is required for Ollama")
+    if args.env_file:
+        try:
+            load_env(args.env_file)
+        except (OSError, ValueError):
+            parser.error("Cannot load env file")
+    args.model = args.model or os.environ.get("OPENROUTER_MODEL")
+    args.base_url = args.base_url or os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    if args.mode == "openrouter" and not os.environ.get("OPENROUTER_API_KEY"):
+        parser.error("OPENROUTER_API_KEY is required")
+    if args.mode == "openrouter" and not args.model:
+        parser.error("--model or OPENROUTER_MODEL is required for OpenRouter")
     model = "scripted-demo" if args.mode == "simulated" else args.model
     summary, result = run(args.source, args.log, mode=args.mode, model=model,
                           prompt_version=args.prompt_version, base_url=args.base_url)

@@ -26,19 +26,18 @@ Chạy riêng một lần (ghi nối tiếp, UUID mới):
 python agent.py --source samples/source.txt --log logs/manual.jsonl --prompt-version v2
 ```
 
-Agent thật dùng Ollama đã cài và model có khả năng tool calling:
+Agent dùng OpenRouter: tạo `.env` riêng (Git bỏ qua file này) với `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` và tùy chọn `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`. Dùng model hỗ trợ tool calling. Có thể đọc cấu hình sẵn có bằng `--env-file /path/to/.env` mà không sao chép key.
 
 ```bash
-ollama pull qwen2.5:7b
-ollama list
-python agent.py --mode ollama --model qwen2.5:7b --prompt-version v2 --log logs/live.jsonl
+python agent.py --mode openrouter --env-file .env --prompt-version v2 --log logs/live.jsonl
+echo $?
+python read_run.py logs/live.jsonl
+python filter_errors.py logs/live.jsonl
 ```
 
-Sau khi cài Ollama theo hướng dẫn chính thức, bảo đảm dịch vụ đang chạy và `ollama list` hiển thị model vừa tải. Nếu server chưa chạy, mở một terminal riêng chạy `ollama serve` rồi trở lại terminal mã nguồn.
+CLI ưu tiên --model/--base-url, sau đó biến môi trường, sau đó giá trị từ file env. File env là các dòng KEY=value, không thực thi shell. Ứng dụng dùng thư viện chuẩn; không cần SDK. Nội dung nguồn được gửi đến OpenRouter và nhà cung cấp model. Xem [tool calling](https://openrouter.ai/docs/guides/features/tool-calling).
 
-Nhánh này chưa được chạy với model thật trong môi trường biên soạn. Test nhánh này dùng phản hồi model giả lập; không chứng minh model thật tự chọn tool. Xem [API Ollama](https://docs.ollama.com/api/chat) và [tool calling](https://docs.ollama.com/capabilities/tool-calling). Cài/chạy Ollama theo hướng dẫn chính thức, kiểm tra endpoint mặc định `http://127.0.0.1:11434`. Có thể dùng `--base-url` hoặc `LLM_BASE_URL`, `--model` hoặc `LLM_MODEL`. Không kế thừa cơ chế `.env` của #48.
-
-Model đề xuất `read_document`; Python kiểm tra tên và đối số rỗng, thực thi tool với file `--source`, rồi gửi nội dung về model. Giới hạn 4 lượt model, timeout 60 giây mỗi request. Một model_end success chỉ xác nhận đã nhận message từ API, không xác nhận tool hợp lệ hay output đúng. Model không gọi tool, gọi tool lạ, không có output hoặc hết lượt đều làm run lỗi. Thành công kỹ thuật không bảo đảm tóm tắt đúng nghĩa hoặc đúng ba ý; hãy đối chiếu nguồn. Dữ liệu nguồn được gửi đến endpoint bạn chọn.
+Model đề xuất read_document; Python giải mã arguments JSON, yêu cầu đối số rỗng và call ID hợp lệ, chạy tool rồi gửi kết quả kèm tool_call_id. Tối đa 4 lượt model, timeout 60 giây mỗi request. Request sử dụng Authorization Bearer và endpoint /chat/completions. Key không được ghi vào log. Thành công kỹ thuật không bảo đảm tóm tắt đúng nghĩa; đối chiếu đầu ra với nguồn. Run có một tool và hai lượt model có 8 sự kiện; demo giả lập có 4 sự kiện mỗi run.
 
 Bộ test hiện tại có 29 test; bao gồm lỗi tool/model ngoài dự kiến, lỗi ghi log tạm thời, schema thiếu trường, metadata bị ghi đè và phản hồi HTTP giả lập. Toàn bộ phần model dùng giả lập.
 
