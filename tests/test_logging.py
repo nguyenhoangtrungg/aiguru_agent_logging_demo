@@ -37,6 +37,16 @@ class LoggingTests(unittest.TestCase):
             self.assertTrue({"model", "prompt_version", "mode", "timestamp", "status"} <= row.keys())
         self.assertGreaterEqual(rows[-1]["duration_ms"], 0)
 
+        # New prompt labels remain readable; invalid labels are rejected.
+        self.log.unlink()
+        with patch.dict("agent.PROMPTS", {"v3": "A revised prompt"}):
+            summary, _ = run(self.root / "missing", self.log, prompt_version="v3")
+        self.assertEqual(summary["error_code"], "document_missing")
+        self.assertEqual(list(error_runs(self.log))[0]["prompt_version"], "v3")
+        for invalid in ["", " ", None, 3]:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                validate_row({**summary, "prompt_version": invalid})
+
     def test_missing(self):
         summary, _ = run(self.root / "missing", self.log)
         self.assertEqual(summary["error_code"], "document_missing")
